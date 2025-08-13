@@ -18,4 +18,4 @@
 ### Step 3: Add Secrets (CRITICAL)
 In Advanced settings, add your secrets:
 ```toml
-GROK_API_KEY = "3e7ZetCJdBOrUwhdr1SgQTY0Mex8OVPDu0miMIrsBpRWVDoc1jNhWZAZkOvNctEULuYxGWguLsk4vMUu"
+GROK_API_KEY = "YOUR KEY"
