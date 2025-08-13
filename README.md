@@ -1,6 +1,9 @@
 # Legal Eagle - AI Legal Research Assistant
 
 ## 🚀 Quick Deploy to Streamlit Cloud
+## License
+Copyright (c) 2025 Stronkai. All Rights Reserved.
+This code is proprietary and confidential.
 
 ### Step 1: GitHub Setup
 1. Create a new GitHub repository
@@ -19,6 +22,4 @@
 In Advanced settings, add your secrets:
 ```toml
 GROK_API_KEY = "YOUR KEY"
-## License
-Copyright (c) 2025 Stronkai. All Rights Reserved.
-This code is proprietary and confidential.
+
