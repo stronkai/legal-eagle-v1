@@ -19,3 +19,6 @@
 In Advanced settings, add your secrets:
 ```toml
 GROK_API_KEY = "YOUR KEY"
+## License
+Copyright (c) 2025 Stronkai. All Rights Reserved.
+This code is proprietary and confidential.
