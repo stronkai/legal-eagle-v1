@@ -21,11 +21,11 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
 
 # Audio handling
-import sounddevice as sd
-import soundfile as sf
+#import sounddevice as sd
+#import soundfile as sf
 import numpy as np
 import tempfile
-import speech_recognition as sr
+#import speech_recognition as sr
 
 # ============= SECURITY LAYER =============
 class SecurityManager:
