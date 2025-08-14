@@ -450,97 +450,107 @@ def main():
         
         st.info("🎁 Join our beta to lock in your lifetime discount!")
     
-    # Research button
-    if st.button("🔍 Run Legal Research", type="primary", use_container_width=True):
-        if not query:
-            st.error("Please enter a legal query")
-            return
+# Research button
+if st.button("🔍 Run Legal Research", type="primary", use_container_width=True):
+    if not query:
+        st.error("Please enter a legal query")
+    else:
+        # Add progress tracking
+        progress_text = st.empty()
+        
+        progress_text.text("✅ Starting search...")
         
         # Security check
         if not SecurityManager.validate_request(st.session_state.session_id):
             st.error("Rate limit exceeded. Please wait before making another request.")
-            return
-        
-        with st.spinner("Searching AustLII database..."):
-            # Search AustLII
-            cases = AustLIISearcher.search_cases(query, jurisdiction)
-            legislation = []  # Simplified for now
-            
-            # Process uploaded files
-            context = ""
-            if uploaded_files:
-                for file in uploaded_files:
-                    try:
-                        if file.size > Config.MAX_FILE_SIZE:
-                            st.warning(f"File {file.name} too large (max 10MB)")
-                            continue
-                        
-                        if file.type == "text/plain":
-                            context += file.read().decode('utf-8')[:5000] + "\n"
-                        elif file.type == "application/pdf":
-                            pdf_reader = PyPDF2.PdfReader(file)
-                            for i, page in enumerate(pdf_reader.pages[:10]):  # Limit pages
-                                context += page.extract_text()[:1000] + "\n"
-                    except Exception as e:
-                        st.warning(f"Error reading {file.name}")
-            
-            # Add transcription
-            if st.session_state.transcription:
-                context += f"\n\nInterview: {st.session_state.transcription[:2000]}"
-        
-        with st.spinner("Analyzing with AI..."):
-            # Build prompt
-            prompt = f"""Analyze this Australian legal query:
+        else:
+            try:
+                progress_text.text("🔍 Searching AustLII database...")
+                
+                # Search AustLII with error handling
+                cases = []
+                try:
+                    cases = AustLIISearcher.search_cases(query, jurisdiction)
+                    progress_text.text(f"✅ Found {len(cases)} cases")
+                except Exception as e:
+                    st.error(f"AustLII search error: {str(e)}")
+                
+                # Process uploaded files
+                context = ""
+                if uploaded_files:
+                    progress_text.text("📄 Processing uploaded files...")
+                    for file in uploaded_files:
+                        try:
+                            if file.size > Config.MAX_FILE_SIZE:
+                                st.warning(f"File {file.name} too large (max 10MB)")
+                                continue
+                            
+                            if file.type == "text/plain":
+                                context += file.read().decode('utf-8')[:5000] + "\n"
+                            elif file.type == "application/pdf":
+                                pdf_reader = PyPDF2.PdfReader(file)
+                                for i, page in enumerate(pdf_reader.pages[:10]):
+                                    context += page.extract_text()[:1000] + "\n"
+                        except Exception as e:
+                            st.warning(f"Error reading {file.name}: {str(e)}")
+                
+                progress_text.text("🤖 Analyzing with AI...")
+                
+                # Build prompt
+                prompt = f"""Analyze this Australian legal query:
 
 Query: {query}
 Jurisdiction: {jurisdiction}
-Context: {context[:2000]}
+Additional Context: {context[:2000] if context else 'None'}
 
-Cases found:
+Relevant cases found in AustLII:
 """
-            for i, case in enumerate(cases[:5], 1):
-                prompt += f"{i}. {case.get('title', '')}\n"
-            
-            prompt += "\nProvide: 1) Legal issues 2) Applicable law 3) Case analysis 4) Strategy"
-            
-            # Secure API call through proxy
-            analysis = APIProxy.call_grok_api(prompt, st.session_state.session_id)
-            
-            st.session_state.research_results = {
-                'query': query,
-                'jurisdiction': jurisdiction,
-                'cases': cases,
-                'analysis': analysis,
-                'timestamp': datetime.now()
-            }
-    
-    with tab3:
-        if st.session_state.research_results:
-            results = st.session_state.research_results
-            
-            st.markdown(f"### Results for {results['jurisdiction']}")
-            st.markdown(f"**Query:** {results['query']}")
-            
-            if results['cases']:
-                st.markdown("### 📚 Relevant Cases")
-                for i, case in enumerate(results['cases'][:5], 1):
-                    with st.expander(f"{i}. {case.get('title', 'Case')}"):
-                        st.markdown(f"**URL:** {case.get('url', 'N/A')}")
-                        st.markdown(f"**Summary:** {case.get('summary', 'N/A')}")
-            
-            st.markdown("### 🤖 AI Analysis")
-            st.markdown(results['analysis'])
-            
-            # Export buttons
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("📄 Export Word"):
-                    st.info("Export feature available in Premium version")
-            with col2:
-                if st.button("📑 Export PDF"):
-                    st.info("Export feature available in Premium version")
-        else:
-            st.info("No results yet. Run a search above.")
+                for i, case in enumerate(cases[:5], 1):
+                    prompt += f"\n{i}. {case.get('title', '')}"
+                    if case.get('citation'):
+                        prompt += f" [{case.get('citation')}]"
+                    if case.get('summary'):
+                        prompt += f"\n   Summary: {case.get('summary', '')[:200]}"
+                
+                prompt += """
+
+Please provide:
+1. **Key Legal Issues**: Identify the main legal questions
+2. **Applicable Legislation**: Cite relevant Acts and sections
+3. **Case Law Analysis**: Discuss relevant precedents
+4. **Strategic Recommendations**: Practical next steps
+
+Format your response with clear headings and be specific to """ + jurisdiction + """ law."""
+                
+                # Get AI analysis
+                analysis = ""
+                try:
+                    if SecurityManager.get_api_key():
+                        progress_text.text("🤖 Calling Grok API...")
+                        analysis = APIProxy.call_grok_api(prompt, st.session_state.session_id)
+                        progress_text.text("✅ Analysis complete!")
+                    else:
+                        analysis = "Demo mode: Add Grok API key for AI analysis"
+                        progress_text.text("⚠️ Running in demo mode")
+                except Exception as e:
+                    st.error(f"AI Analysis error: {str(e)}")
+                    analysis = f"Error during AI analysis: {str(e)}"
+                
+                # Store results
+                st.session_state.research_results = {
+                    'query': query,
+                    'jurisdiction': jurisdiction,
+                    'cases': cases,
+                    'analysis': analysis,
+                    'timestamp': datetime.now()
+                }
+                
+                progress_text.text("✅ Research complete! Check the Results tab.")
+                st.success("✅ Research complete! Check the Results tab above ☝️")
+                
+            except Exception as e:
+                st.error(f"Unexpected error: {str(e)}")
+                st.write("Full error details:", str(e))
 
     # Footer
     st.markdown("---")
