@@ -91,47 +91,83 @@ class APIProxy:
                 "Content-Type": "application/json"
             }
             
-            # FIXED: Correct Grok API endpoint and model name
+            # Try with different model names - grok-2 seems to be the latest
             data = {
-                "model": "grok-beta",  # or "grok-2-latest" or "grok-2-mini"
+                "model": "grok-2",  # Changed from grok-beta to grok-2
                 "messages": [
                     {"role": "system", "content": "You are an expert Australian legal research assistant specializing in Australian law, cases, and legal procedures."},
                     {"role": "user", "content": clean_prompt}
                 ],
-                "max_tokens": 4000,
                 "temperature": 0.7,
                 "stream": False
             }
             
-            # FIXED: Correct xAI API endpoint
+            # Try the OpenAI-compatible endpoint format
             response = requests.post(
-                "https://api.x.ai/v1/chat/completions",  # Correct endpoint
+                "https://api.x.ai/v1/chat/completions",
                 headers=headers,
                 json=data,
                 timeout=30
             )
+            
+            # Debug logging
+            print(f"API Response Status: {response.status_code}")
+            if response.status_code != 200:
+                print(f"API Response Text: {response.text}")
             
             if response.status_code == 200:
                 result = response.json()
                 if 'choices' in result and len(result['choices']) > 0:
                     return result['choices'][0]['message']['content']
                 else:
-                    return "Unexpected response format from API"
+                    return f"Unexpected response format: {json.dumps(result[:500])}"
             elif response.status_code == 401:
-                return "API authentication failed. Please check your API key."
+                return "API authentication failed. Please verify your API key starts with 'xai-' and is correctly entered in Secrets."
+            elif response.status_code == 404:
+                # Try different model names
+                alternative_models = ["grok-1", "grok-beta", "grok-2-mini", "grok"]
+                for model in alternative_models:
+                    data['model'] = model
+                    retry_response = requests.post(
+                        "https://api.x.ai/v1/chat/completions",
+                        headers=headers,
+                        json=data,
+                        timeout=10
+                    )
+                    if retry_response.status_code == 200:
+                        result = retry_response.json()
+                        if 'choices' in result and len(result['choices']) > 0:
+                            return result['choices'][0]['message']['content']
+                
+                return f"""API Error 404: Model not found. 
+                
+Please check your Grok API documentation for the correct model name.
+Tried models: grok-2, grok-1, grok-beta, grok-2-mini, grok
+
+To fix this:
+1. Check your API documentation at x.ai for the correct model name
+2. Verify your API key is active and has access to chat models
+3. Contact x.ai support if the issue persists
+
+Alternative: You can use OpenAI or Claude API instead for immediate results."""
+                
             elif response.status_code == 429:
-                return "Rate limit exceeded. Please try again later."
+                return "Rate limit exceeded. Please try again in a few moments."
+            elif response.status_code == 400:
+                error_detail = response.json().get('error', {}).get('message', response.text)
+                return f"Bad request: {error_detail}"
             else:
-                print(f"API Error: {response.status_code} - {response.text}")
-                return f"API Error: {response.status_code}. Please check your configuration."
+                return f"API Error {response.status_code}: {response.text[:200]}"
                 
         except requests.exceptions.Timeout:
-            return "Request timed out. Please try again."
+            return "Request timed out. The API might be slow - please try again."
         except requests.exceptions.ConnectionError:
             return "Connection error. Please check your internet connection."
+        except json.JSONDecodeError as e:
+            return f"Error parsing API response: {str(e)}"
         except Exception as e:
-            print(f"Internal error: {str(e)}")
-            return f"Error processing request: {str(e)}"
+            print(f"Unexpected error: {str(e)}")
+            return f"Unexpected error: {str(e)}"
 
 # ============= CONFIGURATION =============
 class Config:
