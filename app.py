@@ -1,4 +1,4 @@
-# app.py - SECURE VERSION FOR DEPLOYMENT
+# app.py - COMPLETE WORKING VERSION
 import streamlit as st
 import requests
 import json
@@ -10,8 +10,6 @@ from typing import List, Dict, Optional
 import time
 from bs4 import BeautifulSoup
 import urllib.parse
-from functools import wraps
-import hmac
 
 # Document handling
 from docx import Document
@@ -19,13 +17,6 @@ import PyPDF2
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
-
-# Audio handling
-#import sounddevice as sd
-#import soundfile as sf
-import numpy as np
-import tempfile
-#import speech_recognition as sr
 
 # ============= SECURITY LAYER =============
 class SecurityManager:
@@ -35,10 +26,8 @@ class SecurityManager:
     def get_api_key():
         """Securely retrieve API key from Streamlit secrets"""
         try:
-            # For Streamlit Cloud deployment
             return st.secrets["GROK_API_KEY"]
         except:
-            # For local development only
             return os.getenv('GROK_API_KEY', '')
     
     @staticmethod
@@ -54,7 +43,6 @@ class SecurityManager:
             st.session_state.request_count = 0
             st.session_state.first_request_time = datetime.now()
         
-        # Rate limiting - max 100 requests per hour per session
         st.session_state.request_count += 1
         
         if st.session_state.request_count > 100:
@@ -63,7 +51,6 @@ class SecurityManager:
                 st.error("⚠️ Rate limit exceeded. Please try again later.")
                 return False
             else:
-                # Reset counter after an hour
                 st.session_state.request_count = 0
                 st.session_state.first_request_time = datetime.now()
         
@@ -75,13 +62,11 @@ class SecurityManager:
         if not text:
             return ""
         
-        # Remove potential harmful patterns
         dangerous_patterns = ['<script', 'javascript:', 'onclick', 'onerror', 'eval(', 'exec(']
         clean_text = text
         for pattern in dangerous_patterns:
             clean_text = clean_text.replace(pattern, '')
         
-        # Limit length to prevent DOS
         return clean_text[:10000]
 
 class APIProxy:
@@ -89,21 +74,15 @@ class APIProxy:
     
     @staticmethod
     def call_grok_api(prompt: str, session_id: str) -> str:
-        """
-        Securely call Grok API without exposing key to client
-        API key NEVER leaves the server
-        """
-        # Validate session
+        """Securely call Grok API without exposing key to client"""
         if not SecurityManager.validate_request(session_id):
             return "Request denied due to rate limiting"
         
-        # Get API key securely (never sent to client)
         api_key = SecurityManager.get_api_key()
         
         if not api_key:
             return "API configuration error. Please contact support."
         
-        # Sanitize prompt
         clean_prompt = SecurityManager.sanitize_input(prompt)
         
         try:
@@ -113,7 +92,7 @@ class APIProxy:
             }
             
             data = {
-                "model": "grok-beta",  # Update with actual model
+                "model": "grok-beta",
                 "messages": [
                     {"role": "system", "content": "You are an expert Australian legal research assistant."},
                     {"role": "user", "content": clean_prompt}
@@ -122,7 +101,6 @@ class APIProxy:
                 "temperature": 0.7
             }
             
-            # Server-side API call - key never exposed to client
             response = requests.post(
                 "https://api.x.ai/v1/chat/completions",
                 headers=headers,
@@ -133,31 +111,22 @@ class APIProxy:
             if response.status_code == 200:
                 return response.json()['choices'][0]['message']['content']
             else:
-                # Log error server-side, return generic message to client
                 print(f"API Error: {response.status_code}")
-                return "Service temporarily unavailable. Please try again."
+                return f"API Error: {response.status_code}. Please check your API key and endpoint."
                 
         except Exception as e:
-            # Log error server-side, never expose internal errors to client
             print(f"Internal error: {str(e)}")
-            return "An error occurred processing your request."
+            return f"Error calling API: {str(e)}"
 
 # ============= CONFIGURATION =============
 class Config:
     """Public configuration (no sensitive data here)"""
     
-    # AustLII endpoints (public)
     AUSTLII_BASE = "http://www.austlii.edu.au"
     AUSTLII_SEARCH = "http://www.austlii.edu.au/cgi-bin/sinosrch.cgi"
     
-    # Audio settings
-    SAMPLE_RATE = 44100
-    CHANNELS = 1
-    
-    # File limits
     MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
     
-    # Jurisdiction mappings
     JURISDICTION_MAP = {
         "Commonwealth": "cth",
         "ACT": "act", 
@@ -169,13 +138,6 @@ class Config:
         "Victoria": "vic",
         "Western Australia": "wa"
     }
-    
-    # Future: Crypto payment address (public)
-    CRYPTO_WALLET = {
-        "ETH": "0x...",  # Add your Ethereum address here
-        "BTC": "bc1...",  # Add your Bitcoin address here
-        "USDC": "0x..."   # Add your USDC address here
-    }
 
 # ============= AUSTLII INTEGRATION =============
 class AustLIISearcher:
@@ -185,14 +147,13 @@ class AustLIISearcher:
     def search_cases(query: str, jurisdiction: str, limit: int = 10) -> List[Dict]:
         """Search AustLII for relevant cases"""
         try:
-            # Sanitize query
             clean_query = SecurityManager.sanitize_input(query)
             
             params = {
                 'method': 'auto',
                 'query': clean_query,
                 'meta': f'/{Config.JURISDICTION_MAP.get(jurisdiction, "au")}/',
-                'results': str(min(limit, 20)),  # Cap at 20 for performance
+                'results': str(min(limit, 20)),
                 'submit': 'Search',
                 'mask_path': '/au/cases/',
                 'mask_world': 'au',
@@ -207,7 +168,6 @@ class AustLIISearcher:
             soup = BeautifulSoup(response.text, 'html.parser')
             cases = []
             
-            # Parse results
             results = soup.find_all('li', class_='result') or soup.find_all('div', class_='result-item')
             
             for result in results[:limit]:
@@ -235,69 +195,11 @@ class AustLIISearcher:
             print(f"AustLII search error: {str(e)}")
             return []
 
-# ============= AUDIO HANDLER =============
-class AudioRecorder:
-    """Audio recording handler"""
-    
-    def __init__(self):
-        self.recording = False
-        self.audio_data = []
-        self.sample_rate = Config.SAMPLE_RATE
-    
-    def start_recording(self):
-        """Start recording audio"""
-        self.recording = True
-        self.audio_data = []
-        
-        def callback(indata, frames, time, status):
-            if self.recording:
-                self.audio_data.append(indata.copy())
-        
-        self.stream = sd.InputStream(
-            samplerate=self.sample_rate,
-            channels=Config.CHANNELS,
-            callback=callback
-        )
-        self.stream.start()
-        return True
-    
-    def stop_recording(self):
-        """Stop recording and return audio file path"""
-        if not self.recording:
-            return None
-        
-        self.recording = False
-        self.stream.stop()
-        self.stream.close()
-        
-        if not self.audio_data:
-            return None
-        
-        audio_array = np.concatenate(self.audio_data, axis=0)
-        
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.wav')
-        sf.write(temp_file.name, audio_array, self.sample_rate)
-        
-        return temp_file.name
-    
-    def transcribe_audio(self, audio_path: str) -> str:
-        """Transcribe audio file to text"""
-        try:
-            recognizer = sr.Recognizer()
-            with sr.AudioFile(audio_path) as source:
-                audio = recognizer.record(source)
-                text = recognizer.recognize_google(audio, language='en-AU')
-                return text
-        except Exception as e:
-            return f"Transcription error: {str(e)}"
-
 # ============= MAIN UI =============
 def initialize_session_state():
     """Initialize session state variables"""
     if 'session_id' not in st.session_state:
         st.session_state.session_id = SecurityManager.create_session_token()
-    if 'audio_recorder' not in st.session_state:
-        st.session_state.audio_recorder = AudioRecorder()
     if 'recording' not in st.session_state:
         st.session_state.recording = False
     if 'research_results' not in st.session_state:
@@ -305,7 +207,7 @@ def initialize_session_state():
     if 'transcription' not in st.session_state:
         st.session_state.transcription = ""
     if 'beta_mode' not in st.session_state:
-        st.session_state.beta_mode = True  # Free during beta
+        st.session_state.beta_mode = True
 
 def main():
     st.set_page_config(
@@ -334,6 +236,11 @@ def main():
         text-align: center;
         margin-bottom: 2rem;
     }
+    .status-box {
+        padding: 1rem;
+        border-radius: 8px;
+        margin: 1rem 0;
+    }
     </style>
     """, unsafe_allow_html=True)
     
@@ -343,7 +250,7 @@ def main():
     st.markdown("""
     <div class="beta-banner">
         <h2>🚀 Legal Eagle Beta - FREE During Testing Phase</h2>
-        <p>Help us improve! Report bugs to get lifetime discount when we launch.</p>
+        <p>AI-Powered Australian Legal Research Assistant</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -351,21 +258,19 @@ def main():
     col1, col2 = st.columns([3, 1])
     with col1:
         st.title("⚖️ Legal Eagle")
-        st.markdown("**AI-Powered Australian Legal Research Assistant**")
+        st.markdown("**Your AI Legal Research Assistant**")
     with col2:
         if st.session_state.beta_mode:
             st.success("✅ Beta Access Active")
-        else:
-            st.info("💎 Premium Version")
     
     # Check API configuration
-    if not SecurityManager.get_api_key():
-        st.error("⚠️ Service configuration in progress. Please try again later.")
-        st.info("Contact support@legaleagle.ai for immediate assistance.")
-        return
+    api_configured = bool(SecurityManager.get_api_key())
+    if not api_configured:
+        st.warning("⚠️ Grok API not configured. Running in demo mode.")
+        st.info("To enable AI features: Manage App → Settings → Secrets → Add GROK_API_KEY")
     
     # Main tabs
-    tab1, tab2, tab3, tab4 = st.tabs(["📝 Research", "🎙️ Audio", "📊 Results", "💰 Pricing"])
+    tab1, tab2, tab3 = st.tabs(["📝 Research", "📊 Results", "💡 About"])
     
     with tab1:
         col1, col2 = st.columns([2, 1])
@@ -378,126 +283,80 @@ def main():
             )
             
             query = st.text_area(
-                "Legal Query",
-                placeholder="Example: Client charged with aggravated burglary...",
-                height=100
+                "Enter your legal query",
+                placeholder="Example: Client charged with aggravated burglary under s77 Crimes Act 1958 (Vic). Previous convictions for theft. Seeking bail application strategy.",
+                height=120
             )
             
             uploaded_files = st.file_uploader(
-                "Upload Case Files (PDF/TXT)",
+                "Upload Case Files (PDF/TXT) - Optional",
                 accept_multiple_files=True,
-                type=['pdf', 'txt']
+                type=['pdf', 'txt'],
+                help="Upload relevant documents to provide context"
             )
         
         with col2:
-            st.markdown("### Quick Templates")
-            if st.button("Criminal Law"):
-                st.session_state.template = "Client charged with [offense]..."
-            if st.button("Family Law"):
-                st.session_state.template = "Divorce proceedings with..."
-            if st.button("Property Law"):
-                st.session_state.template = "Contract dispute regarding..."
-    
-    with tab2:
-        st.markdown("### 🎙️ Record Client Interview")
+            st.markdown("### 📚 Quick Templates")
+            
+            templates = {
+                "🔒 Criminal": "Client charged with [offense] under [section] of Crimes Act. Previous convictions: [details]. Seeking advice on [plea/bail/sentencing].",
+                "👨‍👩‍👧 Family": "Divorce proceedings involving [children/property]. Issues: [custody/assets]. Seeking advice on [specific matter].",
+                "🏠 Property": "Property dispute regarding [address]. Issue: [boundary/easement/sale]. Parties: [details].",
+                "💼 Commercial": "Contract dispute between [parties]. Amount: $[value]. Issue: [breach type]."
+            }
+            
+            for label, template in templates.items():
+                if st.button(label, use_container_width=True):
+                    st.info(f"Template: {template}")
         
-        col1, col2, col3 = st.columns([1, 1, 1])
-        
-        with col2:
-            if not st.session_state.recording:
-                if st.button("🔴 Start Recording", use_container_width=True):
-                    if st.session_state.audio_recorder.start_recording():
-                        st.session_state.recording = True
-                        st.rerun()
+        # Research button - INSIDE tab1
+        if st.button("🔍 Run Legal Research", type="primary", use_container_width=True):
+            if not query:
+                st.error("Please enter a legal query")
             else:
-                st.markdown("**🔴 Recording...**")
-                if st.button("⏹️ Stop", use_container_width=True):
-                    audio_path = st.session_state.audio_recorder.stop_recording()
-                    if audio_path:
-                        with st.spinner("Transcribing..."):
-                            transcription = st.session_state.audio_recorder.transcribe_audio(audio_path)
-                            st.session_state.transcription = transcription
-                            st.session_state.recording = False
-                            try:
-                                os.unlink(audio_path)
-                            except:
-                                pass
-                    st.rerun()
-        
-        if st.session_state.transcription:
-            st.success("✅ Transcribed!")
-            st.text_area("Transcription", st.session_state.transcription, height=200)
-    
-    with tab4:
-        st.markdown("### 💰 Pricing - Coming Soon!")
-        st.markdown("""
-        **Beta Period**: FREE for all users
-        
-        **After Beta (Q1 2025)**:
-        - Starter: $49/month (10 searches/day)
-        - Professional: $99/month (50 searches/day)  
-        - Firm: $299/month (Unlimited searches)
-        
-        **Payment Methods** (Coming Soon):
-        - Credit/Debit Card via Stripe
-        - Cryptocurrency (ETH, BTC, USDC)
-        
-        **Beta Testers Get**:
-        - 50% lifetime discount
-        - Priority support
-        - Input on new features
-        """)
-        
-        st.info("🎁 Join our beta to lock in your lifetime discount!")
-    
-# Research button
-if st.button("🔍 Run Legal Research", type="primary", use_container_width=True):
-    if not query:
-        st.error("Please enter a legal query")
-    else:
-        # Add progress tracking
-        progress_text = st.empty()
-        
-        progress_text.text("✅ Starting search...")
-        
-        # Security check
-        if not SecurityManager.validate_request(st.session_state.session_id):
-            st.error("Rate limit exceeded. Please wait before making another request.")
-        else:
-            try:
-                progress_text.text("🔍 Searching AustLII database...")
+                # Add progress tracking
+                progress_text = st.empty()
                 
-                # Search AustLII with error handling
-                cases = []
-                try:
-                    cases = AustLIISearcher.search_cases(query, jurisdiction)
-                    progress_text.text(f"✅ Found {len(cases)} cases")
-                except Exception as e:
-                    st.error(f"AustLII search error: {str(e)}")
+                progress_text.text("✅ Starting search...")
                 
-                # Process uploaded files
-                context = ""
-                if uploaded_files:
-                    progress_text.text("📄 Processing uploaded files...")
-                    for file in uploaded_files:
+                # Security check
+                if not SecurityManager.validate_request(st.session_state.session_id):
+                    st.error("Rate limit exceeded. Please wait before making another request.")
+                else:
+                    try:
+                        progress_text.text("🔍 Searching AustLII database...")
+                        
+                        # Search AustLII with error handling
+                        cases = []
                         try:
-                            if file.size > Config.MAX_FILE_SIZE:
-                                st.warning(f"File {file.name} too large (max 10MB)")
-                                continue
-                            
-                            if file.type == "text/plain":
-                                context += file.read().decode('utf-8')[:5000] + "\n"
-                            elif file.type == "application/pdf":
-                                pdf_reader = PyPDF2.PdfReader(file)
-                                for i, page in enumerate(pdf_reader.pages[:10]):
-                                    context += page.extract_text()[:1000] + "\n"
+                            cases = AustLIISearcher.search_cases(query, jurisdiction)
+                            progress_text.text(f"✅ Found {len(cases)} cases")
                         except Exception as e:
-                            st.warning(f"Error reading {file.name}: {str(e)}")
-                
-                progress_text.text("🤖 Analyzing with AI...")
-                
-                # Build prompt
-                prompt = f"""Analyze this Australian legal query:
+                            st.error(f"AustLII search error: {str(e)}")
+                        
+                        # Process uploaded files
+                        context = ""
+                        if uploaded_files:
+                            progress_text.text("📄 Processing uploaded files...")
+                            for file in uploaded_files:
+                                try:
+                                    if file.size > Config.MAX_FILE_SIZE:
+                                        st.warning(f"File {file.name} too large (max 10MB)")
+                                        continue
+                                    
+                                    if file.type == "text/plain":
+                                        context += file.read().decode('utf-8')[:5000] + "\n"
+                                    elif file.type == "application/pdf":
+                                        pdf_reader = PyPDF2.PdfReader(file)
+                                        for i, page in enumerate(pdf_reader.pages[:10]):
+                                            context += page.extract_text()[:1000] + "\n"
+                                except Exception as e:
+                                    st.warning(f"Error reading {file.name}: {str(e)}")
+                        
+                        progress_text.text("🤖 Analyzing with AI...")
+                        
+                        # Build prompt
+                        prompt = f"""Analyze this Australian legal query:
 
 Query: {query}
 Jurisdiction: {jurisdiction}
@@ -505,14 +364,14 @@ Additional Context: {context[:2000] if context else 'None'}
 
 Relevant cases found in AustLII:
 """
-                for i, case in enumerate(cases[:5], 1):
-                    prompt += f"\n{i}. {case.get('title', '')}"
-                    if case.get('citation'):
-                        prompt += f" [{case.get('citation')}]"
-                    if case.get('summary'):
-                        prompt += f"\n   Summary: {case.get('summary', '')[:200]}"
-                
-                prompt += """
+                        for i, case in enumerate(cases[:5], 1):
+                            prompt += f"\n{i}. {case.get('title', '')}"
+                            if case.get('citation'):
+                                prompt += f" [{case.get('citation')}]"
+                            if case.get('summary'):
+                                prompt += f"\n   Summary: {case.get('summary', '')[:200]}"
+                        
+                        prompt += """
 
 Please provide:
 1. **Key Legal Issues**: Identify the main legal questions
@@ -521,43 +380,143 @@ Please provide:
 4. **Strategic Recommendations**: Practical next steps
 
 Format your response with clear headings and be specific to """ + jurisdiction + """ law."""
-                
-                # Get AI analysis
-                analysis = ""
-                try:
-                    if SecurityManager.get_api_key():
-                        progress_text.text("🤖 Calling Grok API...")
-                        analysis = APIProxy.call_grok_api(prompt, st.session_state.session_id)
-                        progress_text.text("✅ Analysis complete!")
-                    else:
-                        analysis = "Demo mode: Add Grok API key for AI analysis"
-                        progress_text.text("⚠️ Running in demo mode")
-                except Exception as e:
-                    st.error(f"AI Analysis error: {str(e)}")
-                    analysis = f"Error during AI analysis: {str(e)}"
-                
-                # Store results
-                st.session_state.research_results = {
-                    'query': query,
-                    'jurisdiction': jurisdiction,
-                    'cases': cases,
-                    'analysis': analysis,
-                    'timestamp': datetime.now()
-                }
-                
-                progress_text.text("✅ Research complete! Check the Results tab.")
-                st.success("✅ Research complete! Check the Results tab above ☝️")
-                
-            except Exception as e:
-                st.error(f"Unexpected error: {str(e)}")
-                st.write("Full error details:", str(e))
+                        
+                        # Get AI analysis
+                        analysis = ""
+                        try:
+                            if api_configured:
+                                progress_text.text("🤖 Calling Grok API...")
+                                analysis = APIProxy.call_grok_api(prompt, st.session_state.session_id)
+                                progress_text.text("✅ Analysis complete!")
+                            else:
+                                # Demo mode response
+                                analysis = f"""### Legal Research Results (Demo Mode)
+
+**Query Analyzed:** {query}
+
+**Jurisdiction:** {jurisdiction}
+
+**Cases Found:** {len(cases)} relevant cases were found in the AustLII database.
+
+**Note:** This is a demo response. To get full AI-powered legal analysis:
+1. Add your Grok API key in Manage App → Settings → Secrets
+2. The AI will then provide detailed analysis of:
+   - Key legal issues
+   - Applicable legislation
+   - Case law analysis
+   - Strategic recommendations
+
+**Sample Cases Found:**
+"""
+                                for i, case in enumerate(cases[:3], 1):
+                                    analysis += f"\n{i}. {case.get('title', 'Unknown Case')}"
+                                    if case.get('url'):
+                                        analysis += f"\n   Link: {case.get('url')}"
+                                
+                                progress_text.text("⚠️ Running in demo mode (no API key)")
+                        except Exception as e:
+                            st.error(f"AI Analysis error: {str(e)}")
+                            analysis = f"Error during AI analysis: {str(e)}"
+                        
+                        # Store results
+                        st.session_state.research_results = {
+                            'query': query,
+                            'jurisdiction': jurisdiction,
+                            'cases': cases,
+                            'analysis': analysis,
+                            'timestamp': datetime.now()
+                        }
+                        
+                        progress_text.empty()
+                        st.success("✅ Research complete! Click the 'Results' tab above to see your results ☝️")
+                        
+                    except Exception as e:
+                        st.error(f"Unexpected error: {str(e)}")
+                        st.write("Full error details:", str(e))
+    
+    with tab2:
+        if st.session_state.research_results:
+            results = st.session_state.research_results
+            
+            # Results header
+            st.markdown(f"### 📋 Research Results")
+            st.markdown(f"**Jurisdiction:** {results['jurisdiction']}")
+            st.markdown(f"**Query:** {results['query']}")
+            st.markdown(f"**Generated:** {results['timestamp'].strftime('%Y-%m-%d %H:%M')}")
+            
+            # Cases section
+            if results['cases']:
+                st.markdown("### 📚 Relevant Cases from AustLII")
+                for i, case in enumerate(results['cases'][:10], 1):
+                    with st.expander(f"{i}. {case.get('title', 'Case')}"):
+                        if case.get('citation'):
+                            st.markdown(f"**Citation:** {case.get('citation')}")
+                        if case.get('url'):
+                            st.markdown(f"**Link:** [{case.get('url')}]({case.get('url')})")
+                        if case.get('summary'):
+                            st.markdown(f"**Summary:** {case.get('summary')}")
+            else:
+                st.info("No cases found. Try refining your search query.")
+            
+            # AI Analysis
+            st.markdown("### 🤖 AI Legal Analysis")
+            st.markdown(results['analysis'])
+            
+            # Export section
+            st.markdown("### 📤 Export Options")
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("📄 Generate Word Document"):
+                    st.info("Export feature available in premium version")
+            with col2:
+                if st.button("📑 Generate PDF Report"):
+                    st.info("Export feature available in premium version")
+        else:
+            st.info("👈 No results yet. Run a search in the Research tab to see results here.")
+    
+    with tab3:
+        st.markdown("""
+        ### About Legal Eagle
+        
+        Legal Eagle is an AI-powered legal research assistant designed specifically for Australian lawyers and law students.
+        
+        **Features:**
+        - 🔍 Search Australian legal databases (AustLII)
+        - 🤖 AI-powered case analysis (with Grok API)
+        - 📁 Process uploaded case files
+        - 📊 Generate comprehensive research reports
+        - 🎯 Jurisdiction-specific results
+        
+        **How to Use:**
+        1. Select your jurisdiction
+        2. Enter your legal query
+        3. Optionally upload relevant documents
+        4. Click "Run Legal Research"
+        5. View results in the Results tab
+        
+        **Coming Soon:**
+        - 🎙️ Audio transcription for client interviews
+        - 📱 Mobile app
+        - 🔗 Integration with more legal databases
+        - 💼 Practice management features
+        
+        **Beta Feedback:**
+        Email: support@legaleagle.ai
+        
+        **Pricing (After Beta):**
+        - Starter: $49/month
+        - Professional: $99/month
+        - Firm: $299/month
+        
+        Beta users get 50% lifetime discount!
+        """)
 
     # Footer
     st.markdown("---")
     st.markdown("""
-    <div style='text-align: center; color: #666;'>
-        <p>Legal Eagle Beta v1.0 | © 2025 | Built with ❤️ for Australian Lawyers</p>
-        <p>Questions? Email: support@legaleagle.ai</p>
+    <div style='text-align: center; color: #666; padding: 2rem;'>
+        <p>Legal Eagle Beta v1.0 | © 2025 | Built for Australian Legal Professionals</p>
+        <p>⚖️ Not a substitute for professional legal advice</p>
     </div>
     """, unsafe_allow_html=True)
 
