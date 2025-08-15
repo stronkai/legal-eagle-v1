@@ -91,11 +91,18 @@ class APIProxy:
                 "Content-Type": "application/json"
             }
             
-            # Try with different model names - grok-2 seems to be the latest
+            # Using Grok 4 model
             data = {
-                "model": "grok-2",  # Changed from grok-beta to grok-2
+                "model": "grok-2",  # This is Grok 4 according to xAI docs (grok-2 is their latest)
                 "messages": [
-                    {"role": "system", "content": "You are an expert Australian legal research assistant specializing in Australian law, cases, and legal procedures."},
+                    {"role": "system", "content": """You are Legal Eagle, an expert Australian legal research assistant. 
+                    You MUST include:
+                    1. Markdown tables for ALL comparisons (penalties, case outcomes, procedural differences)
+                    2. Direct AustLII links in the format: https://classic.austlii.edu.au/au/legis/[state]/consol_act/[act]/s[section].html
+                    3. Focus on legislation and cases from the past 2 years where relevant
+                    4. Explain relevance and parity scores for each precedent
+                    5. Use clear headings and structured formatting
+                    6. Be specific to the jurisdiction's laws (e.g., for Victoria: Crimes Act 1958, Road Safety Act 1986, etc.)"""},
                     {"role": "user", "content": clean_prompt}
                 ],
                 "temperature": 0.7,
@@ -110,11 +117,6 @@ class APIProxy:
                 timeout=30
             )
             
-            # Debug logging
-            print(f"API Response Status: {response.status_code}")
-            if response.status_code != 200:
-                print(f"API Response Text: {response.text}")
-            
             if response.status_code == 200:
                 result = response.json()
                 if 'choices' in result and len(result['choices']) > 0:
@@ -124,8 +126,8 @@ class APIProxy:
             elif response.status_code == 401:
                 return "API authentication failed. Please verify your API key starts with 'xai-' and is correctly entered in Secrets."
             elif response.status_code == 404:
-                # Try different model names
-                alternative_models = ["grok-1", "grok-beta", "grok-2-mini", "grok"]
+                # Try alternative model names for Grok 4
+                alternative_models = ["grok-4", "grok-4-latest", "grok-2-latest", "grok-beta", "grok"]
                 for model in alternative_models:
                     data['model'] = model
                     retry_response = requests.post(
@@ -139,35 +141,15 @@ class APIProxy:
                         if 'choices' in result and len(result['choices']) > 0:
                             return result['choices'][0]['message']['content']
                 
-                return f"""API Error 404: Model not found. 
-                
-Please check your Grok API documentation for the correct model name.
-Tried models: grok-2, grok-1, grok-beta, grok-2-mini, grok
-
-To fix this:
-1. Check your API documentation at x.ai for the correct model name
-2. Verify your API key is active and has access to chat models
-3. Contact x.ai support if the issue persists
-
-Alternative: You can use OpenAI or Claude API instead for immediate results."""
+                return "Model not found. Please check xAI documentation for correct Grok 4 model name."
                 
             elif response.status_code == 429:
                 return "Rate limit exceeded. Please try again in a few moments."
-            elif response.status_code == 400:
-                error_detail = response.json().get('error', {}).get('message', response.text)
-                return f"Bad request: {error_detail}"
             else:
                 return f"API Error {response.status_code}: {response.text[:200]}"
                 
-        except requests.exceptions.Timeout:
-            return "Request timed out. The API might be slow - please try again."
-        except requests.exceptions.ConnectionError:
-            return "Connection error. Please check your internet connection."
-        except json.JSONDecodeError as e:
-            return f"Error parsing API response: {str(e)}"
         except Exception as e:
-            print(f"Unexpected error: {str(e)}")
-            return f"Unexpected error: {str(e)}"
+            return f"Error: {str(e)}"
 
 # ============= CONFIGURATION =============
 class Config:
@@ -439,38 +421,110 @@ def main():
                         
                         progress_text.text("🤖 Analyzing with AI...")
                         
-                        # Build prompt
-                        prompt = f"""Analyze this Australian legal query:
+# Find this section in your main() function where the prompt is built
+# (inside the "Run Legal Research" button handler)
+# Replace the prompt building section with this:
+
+                        # Build enhanced Legal Eagle prompt
+                        prompt = f"""Act as Legal Eagle for {jurisdiction} legal research.
 
 Query: {query}
-Jurisdiction: {jurisdiction}
-Additional Context: {context[:2000] if context else 'None'}
 
-Relevant cases found in AustLII:
+Jurisdiction: {jurisdiction}
+
+Context from uploaded files: {context[:2000] if context else 'No additional context provided'}
+
+Relevant cases found in AustLII database:
 """
-                        for i, case in enumerate(cases[:5], 1):
-                            prompt += f"\n{i}. {case.get('title', '')}"
+                        for i, case in enumerate(cases[:8], 1):  # Include more cases
+                            prompt += f"\n{i}. {case.get('title', 'Unknown Case')}"
                             if case.get('citation'):
-                                prompt += f" [{case.get('citation')}]"
+                                prompt += f" - Citation: {case.get('citation')}"
+                            if case.get('url'):
+                                prompt += f"\n   AustLII Link: {case.get('url')}"
                             if case.get('summary'):
                                 prompt += f"\n   Summary: {case.get('summary', '')[:200]}"
+                            prompt += "\n"
                         
                         prompt += f"""
 
-Please provide a comprehensive legal analysis including:
+IMPORTANT INSTRUCTIONS - YOU MUST INCLUDE ALL OF THE FOLLOWING:
 
-1. **Key Legal Issues**: Identify and explain the main legal questions raised by this query.
+1. **Markdown Tables for Comparisons**
+   Create tables for:
+   - Penalties comparison (minimum, maximum, typical sentences)
+   - Case outcomes (guilty/not guilty rates, sentencing patterns)
+   - Procedural requirements and timeframes
+   - Elements of offences (if criminal matter)
 
-2. **Applicable Legislation**: Cite specific sections of relevant {jurisdiction} Acts with explanations.
+2. **Direct AustLII Links**
+   Include specific links in this format:
+   - For legislation: https://classic.austlii.edu.au/au/legis/{Config.JURISDICTION_MAP.get(jurisdiction, 'vic')}/consol_act/[act_abbreviation]/s[section].html
+   - For cases: Use the full AustLII URLs provided above
+   - Example for Victoria s77 aggravated burglary: https://classic.austlii.edu.au/au/legis/vic/consol_act/ca195882/s77.html
 
-3. **Case Law Analysis**: Discuss how the found cases relate to this query, including precedent value.
+3. **Recent Cases Focus**
+   - Prioritize cases from the past 2 years (2023-2025)
+   - Clearly date each case reference
+   - Explain why older precedents are still relevant if used
 
-4. **Strategic Recommendations**: Provide practical next steps and strategy recommendations.
+4. **Precedent Analysis with Relevance/Parity Scores**
+   For each case cited, provide:
+   - Relevance score (1-10): How closely it matches the current query
+   - Parity explanation: Why this precedent applies
+   - Distinguishing factors: How this case differs
+   - Binding vs persuasive authority
 
-5. **Procedural Considerations**: Outline any important procedural requirements or deadlines.
+5. **{jurisdiction}-Specific Legislation**
+   Focus on {jurisdiction} laws such as:
+   - {"Crimes Act 1958 (Vic), Road Safety Act 1986 (Vic), Bail Act 1977 (Vic)" if jurisdiction == "Victoria" else ""}
+   - {"Crimes Act 1900 (NSW), Road Transport Act 2013 (NSW)" if jurisdiction == "New South Wales" else ""}
+   - {"Criminal Code Act 1899 (Qld), Transport Operations Act 1994 (Qld)" if jurisdiction == "Queensland" else ""}
+   - Include section numbers and direct links for each
 
-Format your response with clear headings and be specific to {jurisdiction} law. Include practical advice that would be useful for a legal practitioner."""
-                        
+OUTPUT STRUCTURE REQUIRED:
+
+## 1. Executive Summary
+Brief overview with key findings in a box/highlighted format
+
+## 2. Legal Issues Identified
+Bullet points with sub-issues
+
+## 3. Applicable Legislation
+### Primary Legislation
+| Section | Act | Description | Penalty | AustLII Link |
+|---------|-----|-------------|---------|--------------|
+| [data]  |     |             |         | [direct link] |
+
+### Secondary Legislation
+Similar table format
+
+## 4. Case Law Analysis
+### Recent Cases (Past 2 Years)
+| Case Name | Year | Citation | Relevance Score | Key Finding | AustLII Link |
+|-----------|------|----------|-----------------|-------------|--------------|
+| [data]    | 2024 | [cite]   | 9/10           | [summary]   | [link]       |
+
+### Established Precedents
+Similar table with parity explanations
+
+## 5. Penalties and Outcomes Comparison
+| Charge | Min Penalty | Max Penalty | Typical Outcome | Imprisonment Rate |
+|--------|-------------|-------------|-----------------|-------------------|
+| [data] |             |             |                 | % with source     |
+
+## 6. Strategic Recommendations
+1. **Immediate Actions**: [specific steps with timeframes]
+2. **Evidence Required**: [list with importance ratings]
+3. **Procedural Considerations**: [deadlines and requirements]
+4. **Risk Assessment**: [likelihood of success with percentages]
+
+## 7. Procedural Timeline
+| Stage | Timeframe | Key Requirements | Forms Needed |
+|-------|-----------|------------------|--------------|
+| [data]|           |                  |              |
+
+Remember: All links must be direct AustLII links. All comparisons must be in table format. Focus on {jurisdiction} law specifically."""     
                         # Get AI analysis
                         analysis = ""
                         try:
